@@ -7,15 +7,23 @@ import torch.nn as nn
 from PIL import Image
 import io
 
-# Initialize FastAPI
 app = FastAPI(title="EMNIST Classification API", description="A FastAPI-based image classification API using VGG16 for EMNIST ByClass dataset.")
 
 # Load pretrained VGG16 model
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-model = vgg16(weights=VGG16_Weights.IMAGENET1K_V1)  # Use pretrained ImageNet weights
+
+# Initialize VGG16 with pretrained weights
+weights = VGG16_Weights.IMAGENET1K_V1
+model = vgg16(weights=weights)  # Load the model with pretrained weights
+
+# Freeze all the layers so gradients are not calculated during training.
+# This is very important for transfer learning and speed
+for param in model.parameters():
+    param.requires_grad = False
 
 # Modify the classifier for EMNIST (62 classes)
-model.classifier[-1] = nn.Linear(in_features=4096, out_features=62)  
+num_features = model.classifier[6].in_features
+model.classifier[6] = nn.Linear(in_features=num_features, out_features=62)
 
 # Load fine-tuned model weights (if available)
 MODEL_PATH = "backend/vggnet.pth"
@@ -30,7 +38,7 @@ model.eval()
 
 # Define preprocessing for VGG16 (ImageNet normalization)
 transform = transforms.Compose([
-    transforms.Resize((224, 224)),                # Resize to VGG16 input size
+    transforms.Resize((224, 224)),  # Resize to VGG16 input size
     transforms.ToTensor(),
     transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])  # ImageNet normalization
 ])
