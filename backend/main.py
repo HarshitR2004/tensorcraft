@@ -2,22 +2,13 @@ import os
 import io
 from fastapi import FastAPI, File, UploadFile
 from starlette.responses import JSONResponse
-from PIL import Image
+from PIL import Image, ImageOps
 from dotenv import load_dotenv
 import google.generativeai as genai
-import base64
 
+# Load environment variables
+API_KEY = "AIzaSyA3KSVWjkRo7Je1oCnLy8LHMony-paUyrk"
 
-# Load environment variables from .env file
-load_dotenv()
-
-# Debugging: Print the API key value and the current working directory
-
-API_KEY = "AIzaSyCGUfSROoWTNP9w0Q-pfbEyIs00GwfoL5o"
-
-
-if not API_KEY:
-    raise ValueError("GEMINI_API_KEY not found. Set it in environment variables or .env file.")
 
 genai.configure(api_key=API_KEY)
 
@@ -27,40 +18,47 @@ generation_config = {
     "top_p": 0.95,
     "top_k": 40,
     "max_output_tokens": 8192,
-    "response_mime_type": "text/plain",
 }
 
-model = genai.GenerativeModel(
-    model_name="gemini-2.0-flash",
-    generation_config=generation_config,
-    system_instruction="Identify the digit and alphabet which is being uploaded in the image. Just show the result without any extra text. If any other input image is given, return a random digit or letter.",
-)
+model = genai.GenerativeModel(model_name="gemini-2.0-flash", generation_config=generation_config)
 
-# Initialize FastAPI app
 app = FastAPI()
 
 @app.get("/")
 def read_root():
     return {"message": "Welcome to EMNIST prediction API"}
 
+def preprocess_image(image: Image.Image) -> Image.Image:
+    # Resize to a standard size
+    image = image.resize((256, 256))
+
+    # Convert to grayscale
+    image = image.convert("L")  # 'L' mode is grayscale
+
+    # Invert the image
+    image = ImageOps.invert(image)
+    # Threshold to create a binary image (black and white)
+    threshold = 128  # Adjust this value as needed
+    image = image.point(lambda x: 0 if x < threshold else 255, '1') #'1' is bilevel image
+
+    return image
+
 @app.post("/predict/")
 async def predict(file: UploadFile = File(...)):
     try:
-        # Read image
         image_data = await file.read()
         image = Image.open(io.BytesIO(image_data))
 
-        # Convert image to base64
-        buffered = io.BytesIO()
-        image.save(buffered, format="PNG")
-        image_base64 = base64.b64encode(buffered.getvalue()).decode("utf-8")
+        # Preprocess the image
+        processed_image = preprocess_image(image)
 
-        # Send base64 image to Gemini API
-        response = model.generate_content([image_base64])
+        #Ask it to show the letter with high confidence and give it a few example
+        prompt = "Identify the letter in this image. I want you to identify the letter and only provide that letter. Nothing else. For examples: Image with 'A', you response 'A'. Image with 'B', you response 'B'. etc"
+        # Send the image and the prompt to Gemini
+        response = model.generate_content([prompt, processed_image])
 
         return JSONResponse(content={"result": response.text})
 
     except Exception as e:
         return JSONResponse(content={"error": str(e)}, status_code=500)
-
 
