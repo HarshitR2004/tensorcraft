@@ -10,7 +10,7 @@ import io
 app = FastAPI()
 
 # Load the trained model
-MODEL_PATH = "vggnet.pth"
+MODEL_PATH = "backend/vggnet.pth"
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
 # Load pretrained VGG16 model with modified classifier
