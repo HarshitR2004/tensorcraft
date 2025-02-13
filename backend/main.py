@@ -1,92 +1,56 @@
-from fastapi import FastAPI, File, UploadFile
-from fastapi.responses import HTMLResponse
-from torchvision import transforms
-from torchvision.models import vgg16, VGG16_Weights
-import torch
-import torch.nn as nn
-from PIL import Image
+import os
 import io
+from fastapi import FastAPI, File, UploadFile
+from starlette.responses import JSONResponse
+from PIL import Image
+from dotenv import load_dotenv
+import google.generativeai as genai
 
-app = FastAPI(title="EMNIST Classification API", description="A FastAPI-based image classification API using VGG16 for EMNIST ByClass dataset.")
+# Load environment variables from .env file
+load_dotenv()
 
-# Load pretrained VGG16 model
-device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+# Configure Gemini API
+API_KEY = os.getenv("GEMINI_API_KEY")
+if not API_KEY:
+    raise ValueError("GEMINI_API_KEY not found. Set it in environment variables or .env file.")
 
-# Initialize VGG16 with pretrained weights
-weights = VGG16_Weights.IMAGENET1K_V1
-model = vgg16(weights=weights)  # Load the model with pretrained weights
+genai.configure(api_key=API_KEY)
 
-# Freeze all the layers so gradients are not calculated during training.
-# This is very important for transfer learning and speed
-for param in model.parameters():
-    param.requires_grad = False
+# Model Configuration
+generation_config = {
+    "temperature": 1,
+    "top_p": 0.95,
+    "top_k": 40,
+    "max_output_tokens": 8192,
+    "response_mime_type": "text/plain",
+}
 
-# Modify the classifier for EMNIST (62 classes)
-num_features = model.classifier[6].in_features
-model.classifier[6] = nn.Linear(in_features=num_features, out_features=62)
+model = genai.GenerativeModel(
+    model_name="gemini-2.0-flash",
+    generation_config=generation_config,
+    system_instruction="Identify the digit and alphabet which is being uploaded in the image. Just show the result without any extra text. If any other input image is given, return a random digit or letter.",
+)
 
-# Load fine-tuned model weights (if available)
-MODEL_PATH = "backend/vggnet.pth"
-try:
-    model.load_state_dict(torch.load(MODEL_PATH, map_location=device))  # strict=True by default
-    print("Loaded fine-tuned model weights.")
-except Exception as e:
-    print("Using default pretrained VGG16 weights. Error:", e)
+# Initialize FastAPI app
+app = FastAPI()
 
-model.to(device)
-model.eval()
-
-# Define preprocessing for VGG16 (ImageNet normalization)
-transform = transforms.Compose([
-    transforms.Resize((224, 224)),  # Resize to VGG16 input size
-    transforms.ToTensor(),
-    transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])  # ImageNet normalization
-])
-
-def preprocess_image(image_bytes):
-    """
-    Convert uploaded image bytes to a tensor.
-    """
-    image = Image.open(io.BytesIO(image_bytes)).convert("RGB")  # Convert to RGB
-    image = transform(image)  # Apply transformations
-    image = image.unsqueeze(0).to(device)  # Add batch dimension
-    return image
-
-@app.get("/", response_class=HTMLResponse)
-async def welcome_page():
-    """
-    Welcome page with API instructions.
-    """
-    return """
-    <html>
-        <head>
-            <title>EMNIST Classification API</title>
-        </head>
-        <body style="font-family: Arial, sans-serif; text-align: center;">
-            <h1>Welcome to the EMNIST Classification API</h1>
-            <p>This API classifies handwritten characters from the <b>EMNIST ByClass</b> dataset using a pretrained VGG16 model.</p>
-            <h3>How to Use:</h3>
-            <ul style="display: inline-block; text-align: left;">
-                <li>Send a POST request to <code>/predict/</code> with an image file.</li>
-                <li>Supported formats: <b>PNG, JPG, JPEG</b>.</li>
-                <li>The API returns the predicted class (0-61).</li>
-            </ul>
-            <h3>Example Request:</h3>
-            <pre>curl -X 'POST' -F 'file=@image.png' 'http://127.0.0.1:8000/predict/'</pre>
-            <p><b>Happy Coding! 🚀</b></p>
-        </body>
-    </html>
-    """
+@app.get("/")
+def read_root():
+    return {"message": "Welcome to EMNIST prediction API"}
 
 @app.post("/predict/")
-async def predict_image(file: UploadFile = File(...)):
-    # Read image file and preprocess it
-    image_bytes = await file.read()
-    image_tensor = preprocess_image(image_bytes)
+async def predict(file: UploadFile = File(...)):
+    try:
+        # Read image
+        image_data = await file.read()
+        image = Image.open(io.BytesIO(image_data))
 
-    # Make prediction
-    with torch.no_grad():
-        outputs = model(image_tensor)
-        _, predicted = torch.max(outputs, 1)
+        # Send image to Gemini API
+        response = model.generate_content([image])
 
-    return {"prediction": int(predicted.item())}
+        return JSONResponse(content={"result": response.text})
+
+    except Exception as e:
+        return JSONResponse(content={"error": str(e)}, status_code=500)
+
+
