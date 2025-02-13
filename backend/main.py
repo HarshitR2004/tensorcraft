@@ -5,12 +5,17 @@ from starlette.responses import JSONResponse
 from PIL import Image
 from dotenv import load_dotenv
 import google.generativeai as genai
+import base64
+
 
 # Load environment variables from .env file
 load_dotenv()
 
-# Configure Gemini API
-API_KEY = os.getenv("GEMINI_API_KEY")
+# Debugging: Print the API key value and the current working directory
+
+API_KEY = "AIzaSyCGUfSROoWTNP9w0Q-pfbEyIs00GwfoL5o"
+
+
 if not API_KEY:
     raise ValueError("GEMINI_API_KEY not found. Set it in environment variables or .env file.")
 
@@ -45,8 +50,13 @@ async def predict(file: UploadFile = File(...)):
         image_data = await file.read()
         image = Image.open(io.BytesIO(image_data))
 
-        # Send image to Gemini API
-        response = model.generate_content([image])
+        # Convert image to base64
+        buffered = io.BytesIO()
+        image.save(buffered, format="PNG")
+        image_base64 = base64.b64encode(buffered.getvalue()).decode("utf-8")
+
+        # Send base64 image to Gemini API
+        response = model.generate_content([image_base64])
 
         return JSONResponse(content={"result": response.text})
 
