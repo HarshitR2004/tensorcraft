@@ -12,7 +12,7 @@ import logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 
 # Load environment variables (replace with your actual API key management)
-API_KEY = "AIzaSyA3KSVWjkRo7Je1oCnLy8LHMony-paUyrk"  # Replace with your actual API key
+API_KEY = "AIzaSyDGKeZb9uB2gjJ9ubFnnYHVvAeoR00xNMc"  # Replace with your actual API key
 # load_dotenv() # Not needed anymore since the API KEY is directly defined
 
 genai.configure(api_key=API_KEY)
@@ -25,10 +25,10 @@ generation_config = {
     "max_output_tokens": 10,  # Limit output tokens significantly, adjust as needed
 }
 
-# Choose the appropriate model. This example assumes 'gemini-pro-vision' is suitable for digit/letter recognition.
-# If it's not performing well, consider fine-tuning a model or using a different service.
+# Choose the appropriate model.  Crucially, change this to a supported model.
+#  `gemini-pro-vision` is ALSO deprecated.  Use `gemini-1.5-flash` or `gemini-1.5-pro`.
 model = genai.GenerativeModel(
-    model_name="gemini-pro-vision",  #  Try "gemini-pro-vision" or a more specific model
+    model_name="gemini-1.5-flash",  #  <----  **CHANGED THIS LINE**  Use 'gemini-1.5-flash' or 'gemini-1.5-pro'
     generation_config=generation_config
 )
 
@@ -63,23 +63,12 @@ async def predict(file: UploadFile = File(...)):
 
         preprocessed_image = preprocess_image(image)  # Preprocess the image
 
-        # Convert image to Base64 for sending to Gemini
-        buffered = io.BytesIO()
-        preprocessed_image.save(buffered, format="PNG")  # Save the preprocessed image
-        base64_image = base64.b64encode(buffered.getvalue()).decode("utf-8")
-
-        contents = [
-            {
-                "mime_type": "image/png",
-                "data": base64_image
-            }
-        ]
-
         # Refined prompt to Gemini, specify the expected output
         prompt = "Identify the single digit or alphabet character in the image. Return only the single identified character (digit or letter). If the image does not contain a digit or letter, return a question mark '?'. Do not include any explanations or additional text."
 
         try:
-            response = model.generate_content([prompt,contents])
+             # Pass the PIL Image object DIRECTLY to the model.
+            response = model.generate_content([prompt, preprocessed_image])
             response.resolve()
             result = response.text
         except Exception as gemini_error:
@@ -89,6 +78,8 @@ async def predict(file: UploadFile = File(...)):
         if not result:
             logging.warning("Empty response from Gemini API.")
             result = "?"  # Default if nothing is returned.
+
+        result = result.strip()
 
         logging.info(f"Prediction result: {result}")
         return JSONResponse(content={"result": result})
